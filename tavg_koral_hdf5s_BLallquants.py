@@ -8,15 +8,15 @@ import numpy as np
 from metricKS import *
 import h5py
 
-in_path = './phiavgs_BLallquants/' 
-out_path = './phiavgs_BLallquants/' 
+in_path = './ap5ff_0517/analysis/'
+out_path = './ap5ff_0517/analysis/'
+label = 'ff'
 
-label = 'disk24'
 #TMIN = 50000.
 #TMAX = 100000.
 
-TMIN = 11000.
-TMAX = 16000.
+TMIN = 5000.
+TMAX = 10000.
 
 METRIC_OUT = 'BL'
 
@@ -24,6 +24,7 @@ def main():
      
 
     infiles = np.sort(glob.glob(in_path + label + '_ipole*phiavg.h5'))
+    print(infiles)
     
     navg = 0
     for filein in infiles:

@@ -9,37 +9,38 @@ from metricKS import *
 import h5py
 import ehtim.parloop as parloop
 
-NPROC = 16 # use maximum available
+NPROC = 0 # use maximum available
+
 KS2BL = True
+LIBPATH = './'
+OUTPATH = './'
+LABEL = 'label'
+TMIN = 0
+TMAX = 1.e100
+RERUN = True
 
-library_path = './analysis/'
-out_path = './phiavgs_BLallquants/' 
-label = 'disk24'
-
-TMIN = 10000
-TMAX = 20000
-
-RERUN = False
-
-def main_phiavg():
+def main(inpath=LIBPATH, outpath=OUTPATH, label='label', ks2bl=KS2BL, tmin=TMIN, tmax=TMAX, rerun=RERUN):
         
-
-    infiles = np.sort(glob.glob(library_path + 'ipole*.h5'))
+    fun = phiavg_hdf5
+    
+    infiles = np.sort(glob.glob(inpath + 'ipole*.h5'))
     outfiles = [out_path  + label + '_' + os.path.splitext(os.path.basename(file))[0] + '_phiavg.h5'
                 for file in infiles]
-                    
-    args = [[infiles[i], outfiles[i]] for i in range(len(infiles))]
-    #print(outfiles)
-        
-    ploop = parloop.Parloop(phiavg_hdf5)
-    _ = ploop.run_loop(args, NPROC)
+    
+    if NPROC>0:                
+        args = [[infiles[i], outfiles[i], ks2bl, tmin, tmax, rerun, False] for i in range(len(infiles))]
+        ploop = parloop.Parloop(fun)
+        _ = ploop.run_loop(args, NPROC)
 
-    del args, ploop, _
-         
+        del args, ploop, _
+    else:
+        for i in range(len(infiles)):
+            fun(infiles[i],outfiles[i], ks2bl, tmin, tmax, rerun, False)
+            
     return
 
             
-def phiavg_hdf5(filein, fileout, verbose=True, ks2bl=KS2BL,tmin=TMIN,tmax=TMAX):
+def phiavg_hdf5(filein, fileout, ks2bl=KS2BL,tmin=TMIN,tmax=TMAX, verbose=True):
     if verbose: print('averaging hdf5 ', filein, '....')
     
     if (not RERUN) and os.path.exists(fileout):
@@ -209,11 +210,11 @@ def phiavg_hdf5(filein, fileout, verbose=True, ks2bl=KS2BL,tmin=TMIN,tmax=TMAX):
         grp.create_dataset('rho',  data= np.mean(rho,  axis=2))
         grp.create_dataset('uint', data= np.mean(uint, axis=2))
         
-        grp.create_dataset('B1', data= np.mean(B1,  axis=2))
+        grp.create_dataset('B1', data= np.mean(B1, axis=2))
         grp.create_dataset('B2', data= np.mean(B2, axis=2))
         grp.create_dataset('B3', data= np.mean(B3, axis=2))
         
-        grp.create_dataset('U1', data= np.mean(u1_velr,  axis=2))
+        grp.create_dataset('U1', data= np.mean(u1_velr, axis=2))
         grp.create_dataset('U2', data= np.mean(u2_velr, axis=2))
         grp.create_dataset('U3', data= np.mean(u3_velr, axis=2))    
         
@@ -225,13 +226,13 @@ def phiavg_hdf5(filein, fileout, verbose=True, ks2bl=KS2BL,tmin=TMIN,tmax=TMAX):
         grp.create_dataset('Tgas',    data= np.nanmean(Tgas,    axis=2))    
         grp.create_dataset('betainv', data= np.nanmean(betainv, axis=2))                
 
-        grp.create_dataset('b0', data= np.nanmean(b0,  axis=2))
-        grp.create_dataset('b1', data= np.nanmean(b1,  axis=2))
+        grp.create_dataset('b0', data= np.nanmean(b0, axis=2))
+        grp.create_dataset('b1', data= np.nanmean(b1, axis=2))
         grp.create_dataset('b2', data= np.nanmean(b2, axis=2))
         grp.create_dataset('b3', data= np.nanmean(b3, axis=2))
         
-        grp.create_dataset('u0', data= np.nanmean(u0,  axis=2))
-        grp.create_dataset('u1', data= np.nanmean(u1,  axis=2))
+        grp.create_dataset('u0', data= np.nanmean(u0, axis=2))
+        grp.create_dataset('u1', data= np.nanmean(u1, axis=2))
         grp.create_dataset('u2', data= np.nanmean(u2, axis=2))
         grp.create_dataset('u3', data= np.nanmean(u3, axis=2))
 
@@ -272,4 +273,4 @@ def phiavg_hdf5(filein, fileout, verbose=True, ks2bl=KS2BL,tmin=TMIN,tmax=TMAX):
     return
 
 if __name__=='__main__':
-    main_phiavg()
+    main()
