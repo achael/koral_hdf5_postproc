@@ -6,6 +6,7 @@ import glob
 import os
 import numpy as np
 from metricKS import *
+from read_phiavg_BLallquants import read_phiavg_hdf5
 import h5py
 
 in_path = './ap5ff_0517/analysis/'
@@ -35,7 +36,7 @@ def main():
         if time<TMIN or time>TMAX:
             continue
         else:
-            datdict = read_phiavg(filein, metric=METRIC_OUT)
+            datdict = read_phiavg_hdf5(filein, metric=METRIC_OUT)
             if navg==0:
                 avgdict = datdict.copy()
             else:
@@ -55,107 +56,6 @@ def main():
         print('no files in average')
              
     return
-            
-def read_phiavg(filein, verbose=True, metric=METRIC_OUT):
-    if verbose: print('reading hdf5 ', filein, '....')
-    
-    # load data     
-    fin = h5py.File(filein,'r')
-
-    # get info from the header
-    spin = fin['header']['bhspin'][()].astype('f')
-    horiz = 1 + np.sqrt(1-spin**2)
-    metric_run = fin['header']['metric_run'][()]
-    metric_out = fin['header']['metric_out'][()]
-    if not isinstance(metric_run, str): metric_run = metric_run.decode('utf-8')
-    if not isinstance(metric_out, str): metric_out = metric_out.decode('utf-8')
-    if metric_out != metric:
-        raise Exception("output metric %s must be %s!"%(metric_out,metric))
-
-    NX = fin['header']['n1'][()]
-    NY = fin['header']['n2'][()]
-    NZ = fin['header']['n3'][()]
-    gamma_adiab = fin['header']['gam'][()]
-
-    # get coordinates in OUTCOORDS (should always be KS)
-    r = fin['grid_out']['r'][:]
-    th = fin['grid_out']['th'][:]
-    ph = fin['grid_out']['ph'][:]
-    
-    # output dictionary
-    outdict = {}
-
-    # header
-    #outdict['spin'] = spin
-    #outdict['metric'] = metric_out
-    #outdict['gamma_adiab'] = gamma_adiab
-    
-    # coords
-    outdict['r'] = r
-    outdict['th'] = th
-        
-    # get simulation primitive variables
-    outdict['rho'] = fin['quants']['rho'][:]
-    outdict['uint'] = fin['quants']['uint'][:]
-
-    outdict['U1'] = fin['quants']['U1'][:]
-    outdict['U2'] = fin['quants']['U2'][:]
-    outdict['U3'] = fin['quants']['U3'][:]
-
-    outdict['B1'] = fin['quants']['B1'][:]
-    outdict['B2'] = fin['quants']['B2'][:]
-    outdict['B3'] = fin['quants']['B3'][:]
-    
-    # get simulation phiaveraged derived quantities
-    outdict['lorentz'] = fin['quants']['lorentz'][:]
-    outdict['bsq'] = fin['quants']['bsq'][:]
-    outdict['sigma'] = fin['quants']['sigma'][:]
-    outdict['beta'] = fin['quants']['beta'][:]
-    outdict['Tgas'] = fin['quants']['Tgas'][:]
-    outdict['betainv'] = fin['quants']['betainv'][:]    
-
-    outdict['b0'] = fin['quants']['b0'][:]
-    outdict['b1'] = fin['quants']['b1'][:]
-    outdict['b2'] = fin['quants']['b2'][:]
-    outdict['b3'] = fin['quants']['b3'][:]
-
-    outdict['u0'] = fin['quants']['u0'][:]
-    outdict['u1'] = fin['quants']['u1'][:]
-    outdict['u2'] = fin['quants']['u2'][:]
-    outdict['u3'] = fin['quants']['u3'][:]
-
-    outdict['sF12'] = fin['quants']['sF12'][:]
-    outdict['sF13'] = fin['quants']['sF13'][:]
-    outdict['sF23'] = fin['quants']['sF23'][:]
-        
-    outdict['rhou1'] = fin['quants']['rhou1'][:]
-    
-    outdict['T00_mag'] = fin['quants']['T00_mag'][:]
-    outdict['T01_mag'] = fin['quants']['T01_mag'][:]
-    outdict['T02_mag'] = fin['quants']['T02_mag'][:]
-    outdict['T03_mag'] = fin['quants']['T03_mag'][:]
-    outdict['T11_mag'] = fin['quants']['T11_mag'][:]
-    outdict['T12_mag'] = fin['quants']['T12_mag'][:]
-    outdict['T13_mag'] = fin['quants']['T13_mag'][:]
-    outdict['T22_mag'] = fin['quants']['T22_mag'][:]
-    outdict['T23_mag'] = fin['quants']['T23_mag'][:]
-    outdict['T33_mag'] = fin['quants']['T33_mag'][:]    
-
-    outdict['T00_hd'] = fin['quants']['T00_hd'][:]
-    outdict['T01_hd'] = fin['quants']['T01_hd'][:]
-    outdict['T02_hd'] = fin['quants']['T02_hd'][:]
-    outdict['T03_hd'] = fin['quants']['T03_hd'][:]
-    outdict['T11_hd'] = fin['quants']['T11_hd'][:]
-    outdict['T12_hd'] = fin['quants']['T12_hd'][:]
-    outdict['T13_hd'] = fin['quants']['T13_hd'][:]
-    outdict['T22_hd'] = fin['quants']['T22_hd'][:]
-    outdict['T23_hd'] = fin['quants']['T23_hd'][:]
-    outdict['T33_hd'] = fin['quants']['T33_hd'][:]    
-                            
-    # close file
-    fin.close()
-    
-    return outdict
 
 def save_tphiavg_hdf5(fileout, templatefile, avgdict, metric=METRIC_OUT, verbose=True):
 

@@ -10,110 +10,6 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from metricKS import *
 import h5py
 
-
-def my_griddata(datdict, field, xlim=xlim, zlim1=zlim1, zlim2=zlim2, ngrid=500j, verbose=True, reggrid=True):
-  
-    spin = datdict['spin']
-    horiz = 1 + np.sqrt(1-spin**2)    
-    omegaH = spin / (2*horiz)
-    if spin==0: 
-        omegaISCO = 1/(6**1.5)
-        omegaH = omegaISCO
-        #ospin = 0.7
-        #omegaH= ospin / (2 + 2*np.sqrt(1-ospin**2)  )
-           
-    r = datdict['r']
-    th = datdict['th']
-    
-    # put on a regular grid or keep simulation grid? 
-    if reggrid:
-        points=((r*np.sin(th)).flatten(), (r*np.cos(th)).flatten())    
-        grid_z, grid_x = np.mgrid[zlim1:zlim2:ngrid,  0:xlim:ngrid]  
-        grid_r = np.sqrt(grid_z**2 + grid_x**2) 
-        def my_griddata2(data):
-            grid_data = griddata(points, data.flatten(), (grid_x, grid_z), method='cubic', fill_value=np.nan) 
-            grid_data = np.ma.masked_where(np.isnan(grid_data), grid_data)
-            return grid_data
-    else:
-        grid_x = (r*np.sin(th))
-        grid_z = (r*np.cos(th))  
-        grid_r = np.sqrt(grid_z**2 + grid_x**2) 
-        def my_griddata2(data):
-            #grid_data = np.ma.masked_where(np.isnan(data), data)
-            grid_data = data
-            return grid_data
-                    
-    # em fluxes
-    if field == 'femag' or field=='femag_norm':
-        grid_data = my_griddata2(datdict['fe_mag']*datdict['gdet'])
-        #grid_data = np.sign(grid_data)
-
-    elif field == 'femag_prims' or field=='femag_prims_norm':
-        grid_data = my_griddata2(datdict['fe_mag_prims']*datdict['gdet'])
-        #grid_data = np.sign(grid_data)
-        
-    elif field == 'femag_starf' or field=='femag_starf_norm':
-        grid_data = my_griddata2(datdict['fe_mag_starf']*datdict['gdet'])
-        #grid_data = np.sign(grid_data)
-
-    # matter fluxes
-    elif field == 'fehd' or field=='fehd_norm':
-        grid_data = my_griddata2(datdict['fe_hd']*datdict['gdet'])
- 
-       
-    # magnetic field
-    elif field == 'bflux':
-        grid_data = np.abs(my_griddata2(datdict['Bcon'][1]*datdict['gdet']))
-    elif field == 'bpol':
-        Bcon1 = datdict['Bcon'][1]
-        Bcon2 = datdict['Bcon'][2]
-        Bcon3 = datdict['Bcon'][3]
-        if METRIC_OUT=='KS':
-            (_, Bcov1, Bcov2, Bcov3) = lowerKS(0*Bcon1,Bcon1,Bcon2,Bcon3,spin,r,th)
-        elif METRIC_OUT=='BL':
-            (_, Bcov1, Bcov2, Bcov3) = lowerBL(0*Bcon1,Bcon1,Bcon2,Bcon3,spin,r,th)
-        else:
-            raise Exception()        
-        Bpol = Bcon1*Bcov1 + Bcon2*Bcov2
-        grid_data = np.abs(my_griddata2(Bpol))
-        grid_data = np.log10(np.sqrt(grid_data))
-        grid_data = np.ma.masked_where(np.isnan(grid_data), grid_data)        
-    elif field == 'bratio':
-        grid_Bph = my_griddata2(datdict['Bcon'][3])  
-        grid_Br = my_griddata2(datdict['Bcon'][1])
-        grid_data = grid_Bph/grid_Br    
-        #if np.abs(spin)>0:
-        #    grid_data *= np.sign(spin)    
-    elif field == 'bratio_sign':
-        grid_Bph = my_griddata2(datdict['Bcon'][3])  
-        grid_Br = my_griddata2(datdict['Bcon'][1])
-        #grid_data = np.sign(grid_Bph)/np.sign(grid_Br)    
-        grid_data = np.sign(grid_Bph/(grid_Br+1.e-6))    
-        #if np.abs(spin)>0:
-        #    grid_data *= np.sign(spin)    
-    elif field == 'omegafield_th':
-        grid_data = my_griddata2(datdict['omega_th'])
-        #grid_data = np.sign(grid_data)
-    elif field == 'omegafield_r':
-        grid_data = my_griddata2(datdict['omega_r'])
-        #grid_data = np.sign(grid_data)
-    elif field == 'omegafluid':
-        grid_data = my_griddata2(datdict['ucon'][3]/datdict['ucon'][0])
-    elif field == 'sigma2':
-        grid_data = my_griddata2(datdict['bsq'])/my_griddata2(datdict['rho'])
-    elif field == 'beta2':
-        grid_data = my_griddata2((datdict['gamma_adiab']-1)*datdict['uint'])/my_griddata2(datdict['bsq'])
-    elif field == 'logsigma2':
-        grid_data = np.log10(my_griddata2(datdict['bsq'])/my_griddata2(datdict['rho']))
-    elif field == 'logbeta2':
-        grid_data = np.log10(my_griddata2((datdict['gamma_adiab']-1)*datdict['uint'])/my_griddata2(datdict['bsq']))
-    else:
-        grid_data = my_griddata2(datdict[field])
-
-                 
-    if verbose: print(field,'min/max',np.min(grid_data),np.max(grid_data))           
-    return (grid_x,grid_z,grid_data)
-
 def read_phiavg_hdf5(filein, verbose=True, metric=METRIC_OUT):
     """ general read file from tavg_koral_hdf5s_BLallquants.py"""
     
@@ -359,4 +255,107 @@ def unpack_hdf5_blallquants(filein):
     outdat['fe_mag_prims'] = fe_mag_prims
     outdat['fe_mag_starf'] = fe_mag_starf 
     return outdat
+
+def my_griddata(datdict, field, xlim=xlim, zlim1=zlim1, zlim2=zlim2, ngrid=500j, verbose=True, reggrid=True):
+  
+    spin = datdict['spin']
+    horiz = 1 + np.sqrt(1-spin**2)    
+    omegaH = spin / (2*horiz)
+    if spin==0: 
+        omegaISCO = 1/(6**1.5)
+        omegaH = omegaISCO
+        #ospin = 0.7
+        #omegaH= ospin / (2 + 2*np.sqrt(1-ospin**2)  )
+           
+    r = datdict['r']
+    th = datdict['th']
+    
+    # put on a regular grid or keep simulation grid? 
+    if reggrid:
+        points=((r*np.sin(th)).flatten(), (r*np.cos(th)).flatten())    
+        grid_z, grid_x = np.mgrid[zlim1:zlim2:ngrid,  0:xlim:ngrid]  
+        grid_r = np.sqrt(grid_z**2 + grid_x**2) 
+        def my_griddata2(data):
+            grid_data = griddata(points, data.flatten(), (grid_x, grid_z), method='cubic', fill_value=np.nan) 
+            grid_data = np.ma.masked_where(np.isnan(grid_data), grid_data)
+            return grid_data
+    else:
+        grid_x = (r*np.sin(th))
+        grid_z = (r*np.cos(th))  
+        grid_r = np.sqrt(grid_z**2 + grid_x**2) 
+        def my_griddata2(data):
+            #grid_data = np.ma.masked_where(np.isnan(data), data)
+            grid_data = data
+            return grid_data
+                    
+    # em fluxes
+    if field == 'femag' or field=='femag_norm':
+        grid_data = my_griddata2(datdict['fe_mag']*datdict['gdet'])
+        #grid_data = np.sign(grid_data)
+
+    elif field == 'femag_prims' or field=='femag_prims_norm':
+        grid_data = my_griddata2(datdict['fe_mag_prims']*datdict['gdet'])
+        #grid_data = np.sign(grid_data)
+        
+    elif field == 'femag_starf' or field=='femag_starf_norm':
+        grid_data = my_griddata2(datdict['fe_mag_starf']*datdict['gdet'])
+        #grid_data = np.sign(grid_data)
+
+    # matter fluxes
+    elif field == 'fehd' or field=='fehd_norm':
+        grid_data = my_griddata2(datdict['fe_hd']*datdict['gdet'])
+ 
+       
+    # magnetic field
+    elif field == 'bflux':
+        grid_data = np.abs(my_griddata2(datdict['Bcon'][1]*datdict['gdet']))
+    elif field == 'bpol':
+        Bcon1 = datdict['Bcon'][1]
+        Bcon2 = datdict['Bcon'][2]
+        Bcon3 = datdict['Bcon'][3]
+        if METRIC_OUT=='KS':
+            (_, Bcov1, Bcov2, Bcov3) = lowerKS(0*Bcon1,Bcon1,Bcon2,Bcon3,spin,r,th)
+        elif METRIC_OUT=='BL':
+            (_, Bcov1, Bcov2, Bcov3) = lowerBL(0*Bcon1,Bcon1,Bcon2,Bcon3,spin,r,th)
+        else:
+            raise Exception()        
+        Bpol = Bcon1*Bcov1 + Bcon2*Bcov2
+        grid_data = np.abs(my_griddata2(Bpol))
+        grid_data = np.log10(np.sqrt(grid_data))
+        grid_data = np.ma.masked_where(np.isnan(grid_data), grid_data)        
+    elif field == 'bratio':
+        grid_Bph = my_griddata2(datdict['Bcon'][3])  
+        grid_Br = my_griddata2(datdict['Bcon'][1])
+        grid_data = grid_Bph/grid_Br    
+        #if np.abs(spin)>0:
+        #    grid_data *= np.sign(spin)    
+    elif field == 'bratio_sign':
+        grid_Bph = my_griddata2(datdict['Bcon'][3])  
+        grid_Br = my_griddata2(datdict['Bcon'][1])
+        #grid_data = np.sign(grid_Bph)/np.sign(grid_Br)    
+        grid_data = np.sign(grid_Bph/(grid_Br+1.e-6))    
+        #if np.abs(spin)>0:
+        #    grid_data *= np.sign(spin)    
+    elif field == 'omegafield_th':
+        grid_data = my_griddata2(datdict['omega_th'])
+        #grid_data = np.sign(grid_data)
+    elif field == 'omegafield_r':
+        grid_data = my_griddata2(datdict['omega_r'])
+        #grid_data = np.sign(grid_data)
+    elif field == 'omegafluid':
+        grid_data = my_griddata2(datdict['ucon'][3]/datdict['ucon'][0])
+    elif field == 'sigma2':
+        grid_data = my_griddata2(datdict['bsq'])/my_griddata2(datdict['rho'])
+    elif field == 'beta2':
+        grid_data = my_griddata2((datdict['gamma_adiab']-1)*datdict['uint'])/my_griddata2(datdict['bsq'])
+    elif field == 'logsigma2':
+        grid_data = np.log10(my_griddata2(datdict['bsq'])/my_griddata2(datdict['rho']))
+    elif field == 'logbeta2':
+        grid_data = np.log10(my_griddata2((datdict['gamma_adiab']-1)*datdict['uint'])/my_griddata2(datdict['bsq']))
+    else:
+        grid_data = my_griddata2(datdict[field])
+
+                 
+    if verbose: print(field,'min/max',np.min(grid_data),np.max(grid_data))           
+    return (grid_x,grid_z,grid_data)
 
