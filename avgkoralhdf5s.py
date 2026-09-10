@@ -157,8 +157,7 @@ def phireduce_hdf5(filein, fileout, reducetype='avg', phiidx=PHIIDX, metric_avg=
 
     # load the dump and compute the derived quantities
     try:
-        dump = simdata3D(filein, metric=metric_avg, kn=kn, verbose=verbose)
-        dump.set_derived_quantities()
+        dump = read_koral_hdf53D(filein, metric=metric_avg, kn=kn, verbose=verbose)
     except Exception as e:
         print("Error reading h5 file ", filein, ": ", e)
         return
@@ -257,9 +256,11 @@ def tavg_hdf5s(infilelist, outfilebase, tmin=TMIN2, tmax=TMAX,
             continue
 
         try:
+            # a 3D dump needs its derived quantities computed before they can be
+            # averaged; a 2D file already has them stored, and the extra
+            # plotting quantities are not what we are averaging
             if is3d:
-                src = simdata3D(filein, metric=metric_avg, kn=kn, verbose=False)
-                src.set_derived_quantities()
+                src = read_koral_hdf53D(filein, metric=metric_avg, kn=kn, verbose=False)
             else:
                 src = read_koral_hdf52D(filein, verbose=False, compute_derived=False)
             srcnames = src.field_names(fields, exclude)
@@ -315,7 +316,8 @@ def tavg_hdf5s(infilelist, outfilebase, tmin=TMIN2, tmax=TMAX,
     # quantities -- several GB for a 3D dump -- out of the running peak.
     try:
         if is3d:
-            template = simdata3D(templatefile, metric=metric_avg, kn=kn, verbose=False)
+            template = read_koral_hdf53D(templatefile, metric=metric_avg, kn=kn,
+                                         verbose=False, compute_derived=False)
         else:
             template = read_koral_hdf52D(templatefile, verbose=False, compute_derived=False)
     except Exception as e:

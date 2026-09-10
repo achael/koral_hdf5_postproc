@@ -515,29 +515,65 @@ class simdata3D(object):
 
 
 class simdata2D(object):
-    def __init__(self, filename, metric, r, th):
-        self.filename = filename
-        if metric not in ['KS','BL']:
-            raise Exception("metric must be 'KS' or 'BL'")
-        self.metric = metric
-        
-        # coordinates
-        if r.shape != th.shape:
-            raise Exception("grid shapes are inconsistent!")        
-        self.r = r
-        self.th = th
-            
-        self.n1 = r.shape[0]
-        self.n2 = th.shape[1]
+    """A phi-reduced (2D) koral hdf5 file: a phi-average or a phi-slice.
 
-        self.time = None # set by read_koral_hdf52D
+    Unlike simdata3D nothing is recomputed here -- the stored quantities are
+    read as they are, and set_derived_quantities() adds the handful of extra
+    quantities the plotting code wants.  The metric is whatever the file says
+    it is, since the vector components are already in those coordinates.
+    """
+
+    def __init__(self, filename, verbose=False):
+        self.filename = filename
+        self.verbose = verbose
 
         self.data = {}
         self.data_derived = {}
 
+        self._read()
+
     @property
     def shape(self):
         return (self.n1, self.n2)
+
+    def _read(self):
+        """Read the header, the grid and every stored quantity out of the file"""
+        if self.verbose: print('reading hdf5 ', self.filename, '....')
+
+        with h5py.File(self.filename, 'r') as fin:
+            # get info from the header
+            self.metric_run = _tostr(fin['header']['metric_run'][()])
+            self.metric_out = _tostr(fin['header']['metric_out'][()])
+            if self.metric_out not in ['KS','BL']:
+                raise Exception("metric must be 'KS' or 'BL'")
+            self.metric = self.metric_out
+
+            # coords
+            r = fin['grid_out']['r'][:]
+            th = fin['grid_out']['th'][:]
+
+            if r.shape != th.shape:
+                raise Exception("grid shapes are inconsistent!")
+            if len(r.shape)!=2:
+                raise Exception("grid must be 2D, but len(r.shape)=",len(r.shape))
+            if r.shape[0] != fin['header']['n1'][()]:
+                raise Exception("grid shape n1 inconsistent in ",self.filename)
+            if r.shape[1] != fin['header']['n2'][()]:
+                raise Exception("grid shape n2 inconsistent in ",self.filename)
+
+            self.r = r
+            self.th = th
+            self.n1 = r.shape[0]
+            self.n2 = th.shape[1]
+
+            # header quantities
+            self.time = float(fin['t'][()])
+            self.spin = fin['header']['bhspin'][()].astype('f')
+            self.gamma_adiab = fin['header']['gam'][()]
+
+            # get all hdf5 quantites
+            for key in fin['quants'].keys():
+                self.setdata(key, fin['quants'][key][:])
 
     def setdata(self, field, array):
         if array.shape != (self.n1,self.n2):
@@ -654,51 +690,30 @@ class simdata2D(object):
         
 def read_koral_hdf52D(filein, verbose=True, compute_derived=True):
     """read phi-averaged or sliced hdf5 file"""
-    
-    if verbose: print('reading hdf5 ', filein, '....')
-    
-    # load data     
-    fin = h5py.File(filein,'r')
 
-    # get info from the header
-    metric_run = fin['header']['metric_run'][()]
-    metric_out = fin['header']['metric_out'][()]
-    if not isinstance(metric_run, str): metric_run = metric_run.decode('utf-8')
-    if not isinstance(metric_out, str): metric_out = metric_out.decode('utf-8')
+    outdata = simdata2D(filein, verbose=verbose)
 
-    # coords  
-    r = fin['grid_out']['r'][:]
-    th = fin['grid_out']['th'][:]
-    
-    if r.shape != th.shape:
-        raise Exception("grid shapes are inconsistent!")
-    if len(r.shape)!=2:
-        raise Exception("grid must be 2D, but len(r.shape)=",len(r.shape))
-    if r.shape[0] != fin['header']['n1'][()]: 
-        raise Exception("grid shape n1 inconsistent in ",filein)
-    if r.shape[1] != fin['header']['n2'][()]: 
-        raise Exception("grid shape n2 inconsistent in ",filein)
-                
-    # output object
-    outdata = simdata2D(filein, metric_out, r, th)
-
-    # header quantities
-    outdata.time = float(fin['t'][()])
-    outdata.spin = fin['header']['bhspin'][()].astype('f')
-    outdata.gamma_adiab = fin['header']['gam'][()]
-
-       
-    # get all hdf5 quantites 
-    for key in fin['quants'].keys():
-        outdata.setdata(key, fin['quants'][key][:])
-                            
-    # close hdf5 file
-    fin.close()
-    
     # compute derived quantities
     if compute_derived:
         outdata.set_derived_quantities()
-    
+
+    return outdata
+
+
+def read_koral_hdf53D(filein, metric=METRIC_DEFAULT, kn=KLEINNISHINA,
+                      verbose=True, compute_derived=True):
+    """read a full 3D koral dump
+
+    metric is the coordinate system wanted for the output vector components,
+    and the vectors are transformed if the file was written in the other one.
+    """
+
+    outdata = simdata3D(filein, metric=metric, kn=kn, verbose=verbose)
+
+    # compute derived quantities
+    if compute_derived:
+        outdata.set_derived_quantities()
+
     return outdata
 
 # grid the poloidal profiles
