@@ -11,8 +11,12 @@ from scipy.interpolate import griddata
 from matplotlib.ticker import FormatStrFormatter
 from matplotlib import ticker
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from metricKS import *
-from koralopacities import *
+if __package__: # imported as part of the package, from another directory
+    from .metricKS import *
+    from .koralopacities import *
+else:           # run as a script, or imported with this directory on sys.path
+    from metricKS import *
+    from koralopacities import *
 import h5py
 
 

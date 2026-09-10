@@ -15,10 +15,15 @@ import glob
 import os, re, sys
 import numpy as np
 from collections import OrderedDict
-from metricKS import *
 import h5py
-from koralh5postproc import *
-from koralopacities import *
+if __package__: # imported as part of the package, from another directory
+    from .metricKS import *
+    from .koralh5postproc import *
+    from .koralopacities import *
+else:           # run as a script, or imported with this directory on sys.path
+    from metricKS import *
+    from koralh5postproc import *
+    from koralopacities import *
 
 # defaults, all overridable on the command line
 # TODO MIGHT NOT HAVE ENOUGH MEMORY TO RUN IN PARALLEL FOR RADIATION
