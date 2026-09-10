@@ -454,6 +454,36 @@ class simdata3D(object):
             arr = np.full(self.rho.shape, arr)
         return arr
 
+    def write_header(self, fout, n3, ndim):
+        """Write the output /header group, copying units and geom from the dump.
+
+        fout  -- an open, writable h5py.File for the output file
+        n3    -- size of the phi axis of the output grid: 1 for a phi-reduced
+                 file, self.n3 for one that keeps the phi axis
+        ndim  -- dimensionality of the output grid: 2 or 3, to match n3
+        """
+        grp = fout.create_group('header')
+        grp.create_dataset('bhspin', data=self.spin)
+        grp.create_dataset('file_number', data=self.file_number)
+        # header gam is the scalar initial value; the per-cell value is quants/gammagas
+        grp.create_dataset('gam', data=self.gamma_head)
+        grp.create_dataset('has_electrons', data=int(self.has_electrons))
+        grp.create_dataset('has_radiation', data=int(self.has_radiation))
+        grp.create_dataset('metric_out', data=self.metric)
+        grp.create_dataset('metric_run', data=self.metric_run)
+        grp.create_dataset('n1', data=self.n1)
+        grp.create_dataset('n2', data=self.n2)
+        grp.create_dataset('n3', data=n3)
+        grp.create_dataset('ndim', data=ndim)
+        grp.create_dataset('problem_number', data=self.problem_number)
+        grp.create_dataset('version', data=self.version)
+
+        with h5py.File(self.filename, 'r') as fsrc:
+            grp.copy(fsrc['header']['units'], grp)
+            grp.copy(fsrc['header']['geom'], grp)
+
+        return
+
 
 class simdata2D(object):
     def __init__(self, filename, metric, r, th):
