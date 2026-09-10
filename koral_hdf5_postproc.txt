@@ -1,0 +1,96 @@
+Reference: https://github.com/AFD-Illinois/docs/wiki/GRMHD-Output-Format
+
+------------------------------------
+NOTE: Unlike harm dump files, ALL VECTOR COMPONENTS ARE IN KS!!
+------------------------------------
+
+/t time in tg
+
+/header
+
+    version = 'KORALv2' (to distinguish from v1, which had different primitive defns)
+    problem_number  = internal koral problem number
+    file_number = dump file number
+    
+    bhspin = dimensionless spin
+    metric_run = ks, mks1, mks2, mks3, jet (Tells you the coordinates simulation is run in)
+    metric_out = ks, bl (Tells you what coordinates the u,B components are in)
+    n_dim = 3           
+    n1 = NX             
+    n2 = NY             
+    n3 = NZ             
+    n_prim  = 9 (GRMHD) 14 (GRRMHD) 16 (GRRMHD+Te/Ti)     
+    gam = 4/3,5/3,... (for runs where has_electrons=True, this is the initial gamma)             
+
+    has_radiation = True/False
+    has_electrons = True/False
+
+/header/units
+    M_bh = black hole mass (in solar masses)
+    L_unit = length conversion (code -> cgs)
+    T_unit = time conversion (code -> cgs)
+    M_unit = mass density conversion (code -> cgs)
+    U_unit = energy density conversion (code -> cgs)
+    B_unit = magnetic field conversion (code -> cgs, includes sqrt(4pi))
+    
+/header/geom -- grid left EDGE / delta of the grid we run in in code units
+    startx1 = left edge of X grid
+    startx2 = left edge of Y grid
+    startx3 = left edge of Z grid
+    dx1 = cell size in X
+    dx2 = cell size in Y
+    dx3 = cell size in Z
+
+/header/geom/mks2 (only if /header/metric_run='mks2')
+    mksr0 = exponential radius offset
+    mksh0 = parameter for mks2 x2 -> theta transform
+
+/header/geom/mks3 (only if /header/metric_run='mks2')
+    mksr0 = exponential radius offset
+    mksh0 = parameter for mks3 x2 -> theta transform
+    mksmy1 = parameter for mks3 x2 -> theta transform
+    mksmy2 = parameter for mks3 x2 -> theta transform
+    mksmp0 = parameter for mks3 x2 -> theta transform
+    
+/header/geom/jetcoords (only if /header/metric_run='jetcoords')
+    mksr0 = exponential radius offset
+    rbrk = hypergeometric break radius
+    rmin = minimum radius 
+    rmax = maximum radius
+    fjet = fraction of resolution concentrated in jet
+    fdisk = fraction of resolution concentrated in disk
+    runi = radius for uniform dtheta cells
+    rcoll_jet = collimation radius for jet grid
+    rcoll_disk = collimation radius for disk grid
+    rdecoll_jet = decollimation radius for jet grid
+    rdecoll_disk = decollimation radius for disk grid
+    alpha_1 = exponent for x2 -> theta transform
+    alpha_2 = exponent for x2 -> theta transform
+    cylindrify = True/False
+    rcyl = radius inside which to cylindrify
+    ncyl = number of polar axis cells to cylindrify
+
+/grid_run   --> runtime grid. The coordinates are regular so we only include gdet here. 
+    gdet = metric determinant at each grid point
+
+/grid_out   --> always ks (maybe bl sometimes)
+    r = ks r at each grid point
+    th = ks theta at each grid point
+    ph = ks phi at each grid point
+
+/quants (all in KS or BL code units)
+    rho = rest frame code unit mass density
+    uint = rest frame code unit energy density
+
+    U1 = ks  u^r - u^t g^tr/g^tt
+    U2 = ks  u^th - u^t g^tth/g^tt
+    U3 = ks  u^ph - u^t g^tph/g^tt
+
+    B1 = ks B^r
+    B2 = ks B^th
+    B3 = ks B^ph
+
+    te = only if has_electrons=True
+    ti = only if has_electrons=True
+
+
