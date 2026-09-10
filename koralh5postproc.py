@@ -458,6 +458,18 @@ class simdata3D(object):
             arr = np.full(self.rho.shape, arr)
         return arr
 
+    def close(self):
+        """Release the arrays held by this dump.
+
+        The entries of _fields are closures over self, so the object sits in a
+        reference cycle and "del dump" on its own does not free it until the
+        garbage collector next runs.  Clearing the table breaks the cycle, so a
+        caller stepping through many dumps -- each several GB once the derived
+        quantities exist -- gets the memory back immediately.
+        """
+        self._fields = {}
+        return
+
     def write_header(self, fout, n3, ndim):
         """Write the output /header group, copying units and geom from the dump.
 
@@ -545,6 +557,16 @@ class simdata2D(object):
     def field(self, name):
         """One stored quantity, matching simdata3D.field"""
         return self.data[name]
+
+    def close(self):
+        """Release the arrays held by this file, matching simdata3D.close.
+
+        There is no reference cycle to break here, but having the method means a
+        caller can treat 2D and 3D data the same way.
+        """
+        self.data = {}
+        self.data_derived = {}
+        return
 
     def write_tavg_header_and_grid(self, fout):
         """Copy this file's header and grid into an output file

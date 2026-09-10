@@ -6,6 +6,7 @@
 import glob
 import os, sys
 import numpy as np
+from collections import OrderedDict
 from metricKS import *
 import h5py
 import ehtim.parloop as parloop
@@ -168,74 +169,151 @@ def phireduce_hdf5(filein, fileout, reducetype='avg', phiidx=PHIIDX, metric_avg=
         if os.path.exists(fileout):
             os.remove(fileout)
         return
+    finally:
+        # a derived dump is several GB, so hand it back before the next file
+        dump.close()
 
     return
 
 
-def tavg_hdf5s(infilelist, outfilebase, tmin=TMIN2, tmax=TMAX):
-    """time-average phi-averaged hdf5 files"""
+def is_3d_hdf5(filein):
+    """True for a full 3D dump, False for a 2D phi-reduced file"""
+    with h5py.File(filein, 'r') as fin:
+        return len(fin['grid_out']['r'].shape) == 3
+
+
+def tavg_hdf5s(infilelist, outfilebase, tmin=TMIN2, tmax=TMAX,
+               metric_avg=METRIC, kn=KLEINNISHINA, fields=None, exclude=None,
+               verbose=True):
+    """Time-average a list of koral hdf5 files.
+
+    Takes either 2D phi-reduced files (phiavg*/phisli*), whose stored quantities
+    are averaged directly, or full 3D dumps, whose derived quantities are
+    recomputed per dump and averaged on the 3D grid.  Which of the two is
+    decided by looking at the first file.
+
+    Files are opened one at a time and each quantity is accumulated as it is
+    read, so peak memory is one running sum plus one dump.  That matters for 3D
+    input, where a single dump is already ~0.7 GB; use fields/exclude to cut the
+    running sum down further.
+
+    Returns the name of the file written, or None.
+    """
+    infilelist = list(infilelist)
+    if len(infilelist) == 0:
+        print('no files to average')
+        return None
+
+    try:
+        is3d = is_3d_hdf5(infilelist[0])
+    except Exception as e:
+        print("Error reading h5 file ", infilelist[0], ": ", e)
+        return None
+
+    accum = None
+    names = None
+    templatefile = None
     navg = 0
-    tminfile=1.e100
-    tmaxfile=0
+    tminfile = 1.e100
+    tmaxfile = 0
+    tsum = 0.
+
     for filein in infilelist:
-        fin = h5py.File(filein,'r')
-        time = fin['t'][()]
-        fin.close()
-        if time<tmin or time>tmax:
+        time = peek_time(filein)
+        if time is None:
+            print("Error reading time from h5 file ", filein, ", skipping!")
             continue
-        else:
-            if time<tminfile: tminfile=time
-            if time>tmaxfile: tmaxfile=time
-            print(time)
-            koraldata = read_koral_hdf52D(filein, verbose=False)
-            datdict = koraldata.data
-            
-            if navg==0:
-                avgdict = datdict.copy()
+        if time < tmin or time > tmax:
+            continue
+
+        try:
+            if is3d:
+                src = simdata3D(filein, metric=metric_avg, kn=kn, verbose=False)
+                src.set_derived_quantities()
             else:
-                for field in avgdict.keys():
-                    avgdict[field] += datdict[field]
-            navg += 1
-             
-    if navg>0:
-        print('averaging ',navg,'files')
-        for field in avgdict.keys():
-            avgdict[field] /= float(navg)
+                src = read_koral_hdf52D(filein, verbose=False, compute_derived=False)
+            srcnames = src.field_names(fields, exclude)
+        except Exception as e:
+            print("Error reading h5 file ", filein, ", skipping: ", e)
+            continue
 
-        outfile = os.path.splitext(outfilebase)[0] + '_tavg%.0f-%.0f.h5'%(tminfile,tmaxfile)
-        
-        # save the file
-        print('saving time-averaged hdf5 ', outfile, '....')
-        
-        # load template data     
-        fin = h5py.File(infilelist[0],'r')
-            
-        # open output file
-        fout = h5py.File(outfile,'w')
-        
-        # Time
-        fout.create_dataset('t',data='tavg%.0f-%.0f'%(tminfile,tmaxfile))
-        
-        # Copy header 
-        fout.copy(fin['header'],fout)
-    
-        # Copy grid
-        fout.copy(fin['grid_out'],fout)
-        
-        # save quants
-        grp = fout.create_group('quants')
-        for key in avgdict.keys():
-            grp[key] = avgdict[key]        
+        if accum is None:
+            names = srcnames
+            templatefile = filein
+            accum = OrderedDict((k, None) for k in names)
+            if verbose:
+                nbytes = len(names)*np.prod(src.shape)*8
+                print('averaging %d quantities, %.2f GB running sum'
+                      % (len(names), nbytes/1.e9))
+        elif srcnames != names:
+            print("quantities in ", filein, " do not match ", templatefile,
+                  ", skipping!")
+            continue
 
-        # close
-        fin.close()
-        fout.close()
-    
-    
-    else:
+        print(time)
+        for name in names:
+            arr = np.asarray(src.field(name), dtype=np.float64)
+            if accum[name] is None:
+                accum[name] = arr.copy()
+            else:
+                accum[name] += arr
+
+        if time < tminfile: tminfile = time
+        if time > tmaxfile: tmaxfile = time
+        tsum += time
+        navg += 1
+
+        # let the dump go before opening the next one
+        src.close()
+        del src
+
+    if navg == 0:
         print('no files in average')
-             
-    return
+        return None
+
+    print('averaging ', navg, 'files')
+    for name in names:
+        accum[name] /= float(navg)
+
+    outfile = os.path.splitext(outfilebase)[0] + '_tavg%.0f-%.0f.h5'%(tminfile,tmaxfile)
+
+    # save the file
+    print('saving time-averaged hdf5 ', outfile, '....')
+
+    # reopen the first file in the average as the header/grid template.  Doing it
+    # now rather than holding the object through the loop keeps its derived
+    # quantities -- several GB for a 3D dump -- out of the running peak.
+    try:
+        if is3d:
+            template = simdata3D(templatefile, metric=metric_avg, kn=kn, verbose=False)
+        else:
+            template = read_koral_hdf52D(templatefile, verbose=False, compute_derived=False)
+    except Exception as e:
+        print("Error reopening template file ", templatefile, ": ", e)
+        return None
+
+    try:
+        with h5py.File(outfile, 'w') as fout:
+            # Time - the mean, with the window and the file count alongside it
+            fout.create_dataset('t', data=tsum/float(navg))
+            fout.create_dataset('t_min', data=tminfile)
+            fout.create_dataset('t_max', data=tmaxfile)
+            fout.create_dataset('n_avg', data=navg)
+
+            # Copy header and grid from the first file in the average
+            template.write_tavg_header_and_grid(fout)
+
+            # save quants
+            grp = fout.create_group('quants')
+            for name in names:
+                grp.create_dataset(name, data=accum[name])
+    except Exception as e:
+        print("Error writing time-averaged hdf5 file ", outfile, ": ", e)
+        if os.path.exists(outfile):
+            os.remove(outfile)
+        return None
+
+    return outfile
     
 if __name__=='__main__':
     inpath = os.path.join(sys.argv[1],'')
