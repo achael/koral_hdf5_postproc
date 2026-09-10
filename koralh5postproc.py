@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import matplotlib
 import os
 import numpy as np
+from collections import OrderedDict
 from scipy.interpolate import griddata
 from matplotlib.ticker import FormatStrFormatter
 from matplotlib import ticker
@@ -224,6 +225,9 @@ class simdata3D(object):
         if self.has_electrons:
             self._set_electron_quantities()
 
+        # the table of output quantities depends on has_radiation/has_electrons
+        self._build_fields()
+
         return
 
     def _set_electron_quantities(self):
@@ -288,6 +292,167 @@ class simdata3D(object):
         self.BBenergy = A_RAD_CGS*(self.TeK**4) / self.u_unit
 
         return
+
+    ###########################################################################
+    # table of output quantities
+    ###########################################################################
+    def _build_fields(self):
+        """Register every output quantity as a name -> zero-argument callable.
+
+        Nothing is evaluated here, so a caller can pull the quantities out one at
+        a time rather than holding all of them on the 3D grid at once.
+        """
+        f = OrderedDict()
+
+        # Primitive Quantities
+        f['rho']  = lambda: self.rho
+        f['uint'] = lambda: self.uint
+
+        f['B1'] = lambda: self.B1
+        f['B2'] = lambda: self.B2
+        f['B3'] = lambda: self.B3
+
+        f['U1'] = lambda: self.u1_velr
+        f['U2'] = lambda: self.u2_velr
+        f['U3'] = lambda: self.u3_velr
+
+        # Derived Quantities
+        # we don't need the lorentz factor for axisymmetric metric, we can get it from u^0
+        f['pgas']    = lambda: self.pgas # redundant for MHD but useful with variable adiabatic index
+        f['bsq']     = lambda: self.bsq
+        f['sigma']   = lambda: self.bsq / self.rho
+        f['sigmaw']  = lambda: self.bsq / self.w
+        f['Tgas']    = lambda: self.TgasK # TODO in kelvin or not?
+        f['beta']    = lambda: self.pgas / (0.5*self.bsq)
+        f['betainv'] = lambda: (0.5*self.bsq) / self.pgas
+
+        f['absB1'] = lambda: np.abs(self.B1)
+        f['absB2'] = lambda: np.abs(self.B2)
+        f['absB3'] = lambda: np.abs(self.B3)
+
+        for i in range(4):
+            f['b%d' % i] = (lambda i=i: self.bcon[i])
+        for i in range(4):
+            f['u%d' % i] = (lambda i=i: self.ucon[i])
+
+        # spatial components of Maxwell (contravariant)
+        f['sF12'] = lambda: self.bcon[1]*self.ucon[2] - self.bcon[2]*self.ucon[1]
+        f['sF13'] = lambda: self.bcon[1]*self.ucon[3] - self.bcon[3]*self.ucon[1]
+        f['sF23'] = lambda: self.bcon[2]*self.ucon[3] - self.bcon[3]*self.ucon[2]
+
+        # Tmunu mag (contravariant)
+        for (i,j) in TIDX:
+            f['T%d%d_mag' % (i,j)] = (lambda i=i, j=j:
+                self.bsq*self.ucon[i]*self.ucon[j] - self.bcon[i]*self.bcon[j]
+                + 0.5*self.bsq*self.gcon[i][j])
+
+        # Tmunu mat (contravariant)
+        for (i,j) in TIDX:
+            f['T%d%d_hd' % (i,j)] = (lambda i=i, j=j:
+                self.w*self.ucon[i]*self.ucon[j] + self.pgas*self.gcon[i][j])
+
+        # rho-weighted quantities
+        f['rhosq']   = lambda: self.rho*self.rho
+        f['rhobsq']  = lambda: self.rho*self.bsq
+        f['rhouint'] = lambda: self.rho*self.uint
+        f['rhopgas'] = lambda: self.rho*self.pgas
+        f['rhoscaleheight'] = lambda: self.rho*np.abs(self.th - 0.5*np.pi)
+
+        for i in range(4):
+            f['rhou%d' % i] = (lambda i=i: self.rho*self.ucon[i])
+
+        f['rhoabsB1'] = lambda: self.rho*np.abs(self.B1)
+        f['rhoabsB2'] = lambda: self.rho*np.abs(self.B2)
+        f['rhoabsB3'] = lambda: self.rho*np.abs(self.B3)
+
+        f['rhoB1'] = lambda: self.rho*self.B1
+        f['rhoB2'] = lambda: self.rho*self.B2
+        f['rhoB3'] = lambda: self.rho*self.B3
+
+        for i in range(4):
+            f['rhob%d' % i] = (lambda i=i: self.rho*self.bcon[i])
+
+        if self.has_radiation:
+            f['erad']  = lambda: self.erad  # radiation frame
+            f['nphot'] = lambda: self.nphot # radiation frame
+
+            f['F1'] = lambda: self.ur1_velr
+            f['F2'] = lambda: self.ur2_velr
+            f['F3'] = lambda: self.ur3_velr
+
+            for i in range(4):
+                f['ur%d' % i] = (lambda i=i: self.urcon[i])
+
+            for (i,j) in TIDX:
+                f['T%d%d_rad' % (i,j)] = (lambda i=i, j=j:
+                    (4./3.)*self.erad*self.urcon[i]*self.urcon[j]
+                    + (1./3.)*self.erad*self.gcon[i][j])
+
+            # fluid frame quantities
+            f['erad_hat']  = lambda: self.erad_hat
+            f['nphot_hat'] = lambda: self.nphot_hat
+            f['Trad']      = lambda: self.TradK
+
+            # opacities
+            f['opac_syn'] = lambda: self.synabsorbopac
+            f['opac_ff']  = lambda: self.ffabsorbopac
+            # TODO don't double count opac_compt with emis_compt
+            # f['opac_compt'] = lambda: self.comptabsorbopac
+
+            f['emis_syn']   = lambda: -self.BBenergy*self.synemisopac
+            f['emis_ff']    = lambda: -self.BBenergy*self.ffemisopac
+            f['emis_compt'] = lambda: self.erad_hat*self.comptabsorbopac # should be negative
+
+            # rho weighted quantites (?)
+            # TODO do we want ebar weighted quantities?
+            f['rhoehat'] = lambda: self.rho*self.erad_hat
+            f['rhonhat'] = lambda: self.rho*self.nphot_hat
+            f['rhoTrad'] = lambda: self.rho*self.TradK
+
+            for i in range(4):
+                f['rhour%d' % i] = (lambda i=i: self.rho*self.urcon[i])
+
+        if self.has_electrons:
+            f['ti'] = lambda: self.TiK # TODO in kelvin or not?
+            f['te'] = lambda: self.TeK # TODO in kelvin or not?
+            f['gammagas'] = lambda: self.gamma_adiab
+
+            f['pi'] = lambda: self.pi
+            f['pe'] = lambda: self.pe
+
+            # derived quantities
+            f['deltaeK'] = lambda: self.deltaeK
+            f['deltaeZ'] = lambda: self.deltaeZ
+
+            # rho weighted quantites (?)
+            f['rhope'] = lambda: self.rho*self.pe
+            f['rhopi'] = lambda: self.rho*self.pi
+            f['rhogammagas'] = lambda: self.rho*self.gamma_adiab
+
+        self._fields = f
+
+        return
+
+    def field_names(self, fields=None, exclude=None):
+        """Names of the available output quantities, optionally filtered"""
+        names = list(self._fields.keys())
+        if fields:
+            missing = [k for k in fields if k not in self._fields]
+            if missing:
+                raise Exception("unknown field(s) %s in %s -- available: %s"
+                                % (missing, self.filename, ', '.join(names)))
+            names = [k for k in names if k in set(fields)]
+        if exclude:
+            names = [k for k in names if k not in set(exclude)]
+        return names
+
+    def field(self, name):
+        """Evaluate one output quantity on the full 3D grid"""
+        arr = self._fields[name]()
+        # gammagas is a scalar for runs without electrons, broadcast for uniformity
+        if np.ndim(arr) == 0:
+            arr = np.full(self.rho.shape, arr)
+        return arr
 
 
 class simdata2D(object):
