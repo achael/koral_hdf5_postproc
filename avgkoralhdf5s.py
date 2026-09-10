@@ -1,32 +1,35 @@
+#!/usr/bin/env python
 # Andrew Chael, March 2024
 # phi-average, phi-slice, and t-average koral hdf5 files
-# MHD only!!!!
 # assumes axisymmetric metric
+#
+# Command line usage, see --help on each subcommand for the full option list:
+#
+#   avgkoralhdf5s.py avg   DIR         phi-average every dump, then time-average
+#   avgkoralhdf5s.py slice DIR         phi-slice every dump at fixed phi index/indices
+#   avgkoralhdf5s.py tavg  DIR|FILES   time-average 2D reduced files or full 3D dumps
+#   avgkoralhdf5s.py all   DIR         avg (with time-average) followed by slice
 
+import argparse
 import glob
-import os, sys
+import os, re, sys
 import numpy as np
 from collections import OrderedDict
 from metricKS import *
 import h5py
-import ehtim.parloop as parloop
 from koralh5postproc import *
 from koralopacities import *
 
+# defaults, all overridable on the command line
 # TODO MIGHT NOT HAVE ENOUGH MEMORY TO RUN IN PARALLEL FOR RADIATION
-NPROC = 4
-
-# paths
-LIBPATH = './' # use sys.argv[1] in main()
-OUTPATH = './' # same as inpath in main()
-
-METRIC ='KS'
-TMIN1= 1.e4
-TMIN2=1.5e4
+NPROC = 4           # processes to spread the files over; 1 = serial, 0 = all cores
+METRIC = 'KS'       # coordinates of the output vector components
+TMIN1 = 1.e4        # only phi-reduce dumps inside this time window
 TMAX = 2.e4
-RERUN = True
-PHIIDX = 0
-
+TMIN2 = 1.5e4       # only time-average inside this time window
+RERUN = True        # reprocess dumps whose output already exists
+PHIIDX = 0          # phi index for 'slice'
+INPATTERN = 'ipole*.h5'
 
 KLEINNISHINA=False # we had KN turned off in KORAL runs for some reason...
 
@@ -47,42 +50,69 @@ A_RAD_CGS = 4*SIGMA_RAD_CGS/C_CGS
 TPFAC = KBOLTZ_CGS/(MP_CGS*C_CGS*C_CGS) # kelvin to dimensionless units for Tp
 TEFAC = KBOLTZ_CGS/(ME_CGS*C_CGS*C_CGS) # kelvin to dimensionless units for Te
 
-def main(inpath=LIBPATH, outpath=OUTPATH, reducetype='avg', phiidx=PHIIDX, metric_avg=METRIC, tmin=TMIN1, tmax=TMAX, rerun=RERUN):
-        
-    if metric_avg not in ['KS','BL']:
-        raise Exception("metric_avg must be 'KS' or 'BL'")
+def outname(infile, outpath, label):
+    """Output name for a dump, keyed on its number: ipole5000 -> phiavg5000
 
-    if reducetype=='tavg':
-        avgfiles = np.sort(glob.glob(os.path.join(outpath,'phiavg*.h5')))
-        tavg_hdf5s(avgfiles, os.path.join(outpath, 'phiavg'), tmin=TMIN2, tmax=TMAX)
+    Takes the trailing digits of the input name, so it does not care how long
+    the input prefix is, and falls back to the whole stem if there are none.
+    """
+    stem = os.path.splitext(os.path.basename(infile))[0]
+    match = re.search(r'(\d+)$', stem)
+    tag = match.group(1) if match else stem
+    # keep a label that already ends in digits (phisli_ph009) from running into
+    # the dump number; a plain label like phiavg is left alone
+    sep = '_' if label and label[-1].isdigit() else ''
+    return os.path.join(outpath, label + sep + tag + '.h5')
 
-    else:
-        if reducetype=='avg':
-            label = 'phiavg'
-        elif reducetype=='slice':
-            label = 'phisli'
+
+def gather_files(inputs, pattern):
+    """Expand a list of directories, files or globs into a sorted file list.
+
+    Files written by the time-average (*_tavg*) are always dropped, so that
+    re-running never folds a previous average back into a new one.
+    """
+    files = []
+    for item in inputs:
+        if os.path.isdir(item):
+            files.extend(glob.glob(os.path.join(item, pattern)))
         else:
-            raise Exception("reducetype must be 'avg' or 'slice")
-                
-        infiles = np.sort(glob.glob(os.path.join(inpath, 'ipole*.h5')))
-        outfiles = [os.path.join(outpath, label + os.path.splitext(os.path.basename(file))[0][5:] + '.h5') for file in infiles]
-    
-        if NPROC>0:                
-            args = [[infiles[i], outfiles[i], reducetype, phiidx, metric_avg, tmin, tmax, rerun, False] for i in range(len(infiles))]
+            hits = glob.glob(item)
+            files.extend(hits if hits else [item])
+    files = [f for f in files if '_tavg' not in os.path.basename(f)]
+    return sorted(set(files))
+
+
+def run_reduction(infiles, outpath, reducetype, label, phiidx, metric_avg,
+                  tmin, tmax, rerun, kn, fields, exclude, nproc, verbose):
+    """phi-reduce a list of dumps, in parallel if asked for"""
+    outfiles = [outname(f, outpath, label) for f in infiles]
+    args = [[infiles[i], outfiles[i], reducetype, phiidx, metric_avg,
+             tmin, tmax, rerun, verbose, kn, fields, exclude]
+            for i in range(len(infiles))]
+
+    if nproc != 1 and len(args) > 0:
+        try:
+            import ehtim.parloop as parloop
+        except ImportError:
+            print('ehtim.parloop not available, running serially')
+        else:
             ploop = parloop.Parloop(phireduce_hdf5)
-            _ = ploop.run_loop(args, NPROC)
+            _ = ploop.run_loop(args, nproc)
+            del ploop, _
+            return outfiles
 
-            del args, ploop, _
-        else:
-            for i in range(len(infiles)):
-                phireduce_hdf5(infiles[i],outfiles[i], reducetype, phiidx, metric_avg, tmin, tmax, rerun, False)
-    
-        # time average
-        if reducetype=='avg':
-            avgfiles = np.sort(glob.glob(os.path.join(outpath,label+'*.h5')))
-            tavg_hdf5s(avgfiles, os.path.join(outpath, label), tmin=TMIN2, tmax=TMAX)
-         
-    return
+    for arg in args:
+        phireduce_hdf5(*arg)
+
+    return outfiles
+
+
+def slice_labels(label, phiidxs):
+    """One output prefix per phi index, left alone when there is only one"""
+    if len(phiidxs) == 1:
+        return {phiidxs[0]: label}
+    return OrderedDict((idx, '%s_ph%03d' % (label, idx)) for idx in phiidxs)
+
 
 def phireduce(data, reducetype='avg', phiidx=PHIIDX):
     """Either average or slice a 3D data set"""
@@ -314,11 +344,223 @@ def tavg_hdf5s(infilelist, outfilebase, tmin=TMIN2, tmax=TMAX,
         return None
 
     return outfile
-    
+
+
+###############################################################################
+# subcommands
+###############################################################################
+
+def do_avg(args):
+    """phi-average every dump in the input directory, then time-average"""
+    infiles = gather_files([args.inpath], args.pattern)
+    if len(infiles) == 0:
+        print('no input files matching', args.pattern, 'in', args.inpath)
+        return
+
+    print('phi-averaging %d files' % len(infiles))
+    run_reduction(infiles, args.outpath, 'avg', args.label, PHIIDX, args.metric,
+                  args.tmin, args.tmax, args.rerun, args.kn,
+                  args.fields, args.exclude, args.nproc, args.verbose)
+
+    if args.tavg:
+        avgfiles = gather_files([args.outpath], args.label + '*.h5')
+        tavg_hdf5s(avgfiles, os.path.join(args.outpath, args.label),
+                   tmin=args.tavg_tmin, tmax=args.tavg_tmax,
+                   metric_avg=args.metric, kn=args.kn,
+                   fields=args.fields, exclude=args.exclude, verbose=args.verbose)
+    return
+
+
+def do_slice(args):
+    """phi-slice every dump in the input directory, at each requested phi index"""
+    infiles = gather_files([args.inpath], args.pattern)
+    if len(infiles) == 0:
+        print('no input files matching', args.pattern, 'in', args.inpath)
+        return
+
+    labels = slice_labels(args.label, args.phi_idx)
+    for phiidx in args.phi_idx:
+        print('phi-slicing %d files at phi index %d' % (len(infiles), phiidx))
+        run_reduction(infiles, args.outpath, 'slice', labels[phiidx], phiidx, args.metric,
+                      args.tmin, args.tmax, args.rerun, args.kn,
+                      args.fields, args.exclude, args.nproc, args.verbose)
+    return
+
+
+def do_tavg(args):
+    """time-average the given files, 2D reduced or full 3D"""
+    pattern = args.pattern if args.pattern else 'phiavg*.h5'
+    infiles = gather_files(args.inputs, pattern)
+    if len(infiles) == 0:
+        print('no input files matching', pattern, 'in', ' '.join(args.inputs))
+        return
+
+    # default the output prefix to the input prefix: phiavg5000 -> phiavg,
+    # phisli_ph009_5000 -> phisli_ph009
+    label = args.label
+    if label is None:
+        stem = os.path.splitext(os.path.basename(infiles[0]))[0]
+        label = re.sub(r'[_-]?\d+$', '', stem) or stem
+
+    outpath = args.outpath
+    if outpath is None:
+        outpath = os.path.dirname(os.path.abspath(infiles[0]))
+
+    tavg_hdf5s(infiles, os.path.join(outpath, label),
+               tmin=args.tmin, tmax=args.tmax,
+               metric_avg=args.metric, kn=args.kn,
+               fields=args.fields, exclude=args.exclude, verbose=args.verbose)
+    return
+
+
+def do_all(args):
+    """avg, with its time-average, followed by slice"""
+    do_avg(args)
+
+    slice_args = argparse.Namespace(**vars(args))
+    slice_args.label = args.slice_label
+    do_slice(slice_args)
+    return
+
+
+###############################################################################
+# command line
+###############################################################################
+
+def _csv(value):
+    """--fields rho,bsq,sigma -> ['rho','bsq','sigma']"""
+    return [v.strip() for v in value.split(',') if v.strip()]
+
+
+def build_parser():
+    fmt = argparse.ArgumentDefaultsHelpFormatter
+
+    # option groups shared between subcommands
+    io_p = argparse.ArgumentParser(add_help=False)
+    io_p.add_argument('-o', '--outpath', default=None, metavar='DIR',
+                      help='directory for the output files (default: the input directory)')
+    io_p.add_argument('--pattern', default=INPATTERN, metavar='GLOB',
+                      help='glob for the input dumps inside the input directory')
+
+    sel_p = argparse.ArgumentParser(add_help=False)
+    sel_p.add_argument('--tmin', type=float, default=TMIN1,
+                       help='only process dumps with t >= TMIN')
+    sel_p.add_argument('--tmax', type=float, default=TMAX,
+                       help='only process dumps with t <= TMAX')
+
+    phys_p = argparse.ArgumentParser(add_help=False)
+    phys_p.add_argument('--metric', choices=['KS','BL'], default=METRIC,
+                        help='coordinates of the output vector components')
+    phys_p.add_argument('--kn', dest='kn', action='store_true', default=KLEINNISHINA,
+                        help='include the Klein-Nishina correction in the opacities')
+    # SUPPRESS on the negative half of each pair: the positive one already
+    # supplies the default, and without it the help prints a misleading one
+    phys_p.add_argument('--no-kn', dest='kn', action='store_false',
+                        default=argparse.SUPPRESS,
+                        help='leave the Klein-Nishina correction out')
+
+    run_p = argparse.ArgumentParser(add_help=False)
+    run_p.add_argument('-n', '--nproc', type=int, default=NPROC, metavar='N',
+                       help='processes to spread the files over; 1 = serial, 0 = all cores')
+    run_p.add_argument('--rerun', dest='rerun', action='store_true', default=RERUN,
+                       help='reprocess dumps whose output file already exists')
+    run_p.add_argument('--no-rerun', dest='rerun', action='store_false',
+                       default=argparse.SUPPRESS,
+                       help='skip dumps whose output file already exists')
+    run_p.add_argument('-q', '--quiet', dest='verbose', action='store_false', default=True,
+                       help='less chatter per file')
+
+    fld_p = argparse.ArgumentParser(add_help=False)
+    fld_p.add_argument('--fields', type=_csv, default=None, metavar='A,B,C',
+                       help='only compute/average these quantities (default: all of them)')
+    fld_p.add_argument('--exclude-fields', dest='exclude', type=_csv, default=None,
+                       metavar='A,B,C', help='drop these quantities')
+
+    tavg_p = argparse.ArgumentParser(add_help=False)
+    tavg_p.add_argument('--tavg', dest='tavg', action='store_true', default=True,
+                        help='time-average the phi-averages when finished')
+    tavg_p.add_argument('--no-tavg', dest='tavg', action='store_false',
+                        default=argparse.SUPPRESS,
+                        help='stop after the phi-average')
+    tavg_p.add_argument('--tavg-tmin', type=float, default=TMIN2,
+                        help='start of the time-averaging window')
+    tavg_p.add_argument('--tavg-tmax', type=float, default=TMAX,
+                        help='end of the time-averaging window')
+
+    sli_p = argparse.ArgumentParser(add_help=False)
+    sli_p.add_argument('--phi-idx', type=int, action='append', default=None, metavar='I',
+                       help='phi index to slice at; repeat it for several slices '
+                            '(default: %d)' % PHIIDX)
+
+    parser = argparse.ArgumentParser(
+        prog='avgkoralhdf5s.py',
+        description='phi-average, phi-slice and time-average KORAL ipole-format hdf5 dumps.')
+    sub = parser.add_subparsers(dest='command', metavar='COMMAND')
+
+    p = sub.add_parser('avg', parents=[io_p, sel_p, phys_p, run_p, fld_p, tavg_p],
+                       formatter_class=fmt,
+                       help='phi-average every dump, then time-average the results')
+    p.add_argument('inpath', help='directory holding the dumps')
+    p.add_argument('--label', default='phiavg', help='prefix for the output files')
+    p.set_defaults(func=do_avg)
+
+    p = sub.add_parser('slice', parents=[io_p, sel_p, phys_p, run_p, fld_p, sli_p],
+                       formatter_class=fmt,
+                       help='phi-slice every dump at one or more fixed phi indices')
+    p.add_argument('inpath', help='directory holding the dumps')
+    p.add_argument('--label', default='phisli', help='prefix for the output files')
+    p.set_defaults(func=do_slice)
+
+    p = sub.add_parser('tavg', parents=[phys_p, fld_p], formatter_class=fmt,
+                       help='time-average 2D reduced files or full 3D dumps')
+    p.add_argument('inputs', nargs='+', metavar='PATH',
+                   help='directory, files or globs to average')
+    p.add_argument('--pattern', default=None, metavar='GLOB',
+                   help='glob applied inside a directory argument (default: phiavg*.h5)')
+    p.add_argument('-o', '--outpath', default=None, metavar='DIR',
+                   help='directory for the output file (default: alongside the inputs)')
+    p.add_argument('--label', default=None,
+                   help='prefix for the output file (default: taken from the inputs)')
+    p.add_argument('--tmin', type=float, default=TMIN2,
+                   help='start of the time-averaging window')
+    p.add_argument('--tmax', type=float, default=TMAX,
+                   help='end of the time-averaging window')
+    p.add_argument('-q', '--quiet', dest='verbose', action='store_false', default=True,
+                   help='less chatter per file')
+    p.set_defaults(func=do_tavg)
+
+    p = sub.add_parser('all', parents=[io_p, sel_p, phys_p, run_p, fld_p, tavg_p, sli_p],
+                       formatter_class=fmt,
+                       help='avg, with its time-average, followed by slice')
+    p.add_argument('inpath', help='directory holding the dumps')
+    p.add_argument('--label', default='phiavg', help='prefix for the phi-averaged files')
+    p.add_argument('--slice-label', default='phisli', help='prefix for the phi-sliced files')
+    p.set_defaults(func=do_all)
+
+    return parser
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.command is None:
+        parser.print_help()
+        return 1
+
+    # things the parser cannot express directly
+    if getattr(args, 'phi_idx', None) is None and hasattr(args, 'phi_idx'):
+        args.phi_idx = [PHIIDX]
+    if getattr(args, 'inpath', None) is not None:
+        args.inpath = os.path.join(args.inpath, '')
+        if args.outpath is None:
+            args.outpath = args.inpath
+    if getattr(args, 'outpath', None) and not os.path.isdir(args.outpath):
+        os.makedirs(args.outpath)
+
+    args.func(args)
+    return 0
+
+
 if __name__=='__main__':
-    inpath = os.path.join(sys.argv[1],'')
-    outpath = inpath
-    
-    main(inpath, outpath, reducetype='avg')
-    main(inpath, outpath, reducetype='slice', phiidx=PHIIDX)
-    main(inpath, outpath, reducetype='tavg')
+    sys.exit(main())
