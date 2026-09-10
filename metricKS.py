@@ -326,30 +326,31 @@ def lorentz_BL(u0, spin, r, th):
 # Transformations
 ##################################
     
-# transformation from KS 2 BL
-def dxdx_ks2bl(spin, r, th):
+# transformation from BL 2 KS
+# t_ks = t_bl + int 2r dr/Delta,  ph_ks = ph_bl + int a dr/Delta
+def dxdx_bl2ks(spin, r, th):
     a = spin
     a2 = a**2
     Delta = r**2 - 2*r + a**2
     Sigma = r**2 + a**2 * np.cos(th)**2
     sth2 = np.sin(th)**2
-    
+
     if isinstance(r,np.ndarray):
         dxdx = np.zeros(np.hstack(((4,4),r.shape)))
     else:
         dxdx = np.zeros((4,4))
-    
+
     dxdx[0][0] = 1.
     dxdx[1][1] = 1.
-    dxdx[2][2] = 1. 
+    dxdx[2][2] = 1.
     dxdx[3][3] = 1.
-    
+
     dxdx[0][1] = 2*r/Delta
     dxdx[3][1] = a/Delta
-    
+
     return dxdx
-    
-# transformation from BL 2 KS
+
+# transformation from KS 2 BL
 def dxdx_ks2bl(spin, r, th):
     a = spin
     a2 = a**2
