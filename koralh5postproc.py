@@ -47,6 +47,19 @@ def _tostr(val):
     return str(val)
 
 
+def _filter_names(names, fields=None, exclude=None, filename=''):
+    """Apply the optional include/exclude lists to a list of quantity names"""
+    if fields:
+        missing = [k for k in fields if k not in names]
+        if missing:
+            raise Exception("unknown field(s) %s in %s -- available: %s"
+                            % (missing, filename, ', '.join(names)))
+        names = [k for k in names if k in set(fields)]
+    if exclude:
+        names = [k for k in names if k not in set(exclude)]
+    return names
+
+
 class simdata3D(object):
     """A raw KORAL ipole-format hdf5 dump plus the quantities derived from it.
 
@@ -435,16 +448,7 @@ class simdata3D(object):
 
     def field_names(self, fields=None, exclude=None):
         """Names of the available output quantities, optionally filtered"""
-        names = list(self._fields.keys())
-        if fields:
-            missing = [k for k in fields if k not in self._fields]
-            if missing:
-                raise Exception("unknown field(s) %s in %s -- available: %s"
-                                % (missing, self.filename, ', '.join(names)))
-            names = [k for k in names if k in set(fields)]
-        if exclude:
-            names = [k for k in names if k not in set(exclude)]
-        return names
+        return _filter_names(list(self._fields.keys()), fields, exclude, self.filename)
 
     def field(self, name):
         """Evaluate one output quantity on the full 3D grid"""
@@ -484,6 +488,19 @@ class simdata3D(object):
 
         return
 
+    def write_tavg_header_and_grid(self, fout):
+        """Write the header and grid for a 3D time-average, keeping the phi axis
+
+        fout -- an open, writable h5py.File
+        """
+        self.write_header(fout, n3=self.n3, ndim=3)
+
+        grp = fout.create_group('grid_out')
+        grp.create_dataset('r',  data=self.r)
+        grp.create_dataset('th', data=self.th)
+        grp.create_dataset('ph', data=self.ph)
+        return
+
 
 class simdata2D(object):
     def __init__(self, filename, metric, r, th):
@@ -501,15 +518,45 @@ class simdata2D(object):
         self.n1 = r.shape[0]
         self.n2 = th.shape[1]
 
-        self.data = {}       
+        self.time = None # set by read_koral_hdf52D
+
+        self.data = {}
         self.data_derived = {}
-        
+
+    @property
+    def shape(self):
+        return (self.n1, self.n2)
+
     def setdata(self, field, array):
         if array.shape != (self.n1,self.n2):
             raise Exception(field, " shape is not consistent with grid ", self.n1, self.n2)
 
         self.data[field] = array
-   
+
+    def field_names(self, fields=None, exclude=None):
+        """Names of the stored quantities, optionally filtered.
+
+        Same interface as simdata3D.field_names, so a caller (e.g. the
+        time-average) can treat 2D reduced files and full 3D dumps alike.
+        Only the directly stored quantities are listed, not data_derived.
+        """
+        return _filter_names(list(self.data.keys()), fields, exclude, self.filename)
+
+    def field(self, name):
+        """One stored quantity, matching simdata3D.field"""
+        return self.data[name]
+
+    def write_tavg_header_and_grid(self, fout):
+        """Copy this file's header and grid into an output file
+
+        fout -- an open, writable h5py.File
+        """
+        with h5py.File(self.filename, 'r') as fin:
+            fout.copy(fin['header'], fout)
+            fout.copy(fin['grid_out'], fout)
+        return
+
+
     def set_derived_quantities(self):
         """compute derived data, i.e. data not averaged directly"""
         # conv_vel
@@ -614,9 +661,10 @@ def read_koral_hdf52D(filein, verbose=True, compute_derived=True):
     outdata = simdata2D(filein, metric_out, r, th)
 
     # header quantities
+    outdata.time = float(fin['t'][()])
     outdata.spin = fin['header']['bhspin'][()].astype('f')
     outdata.gamma_adiab = fin['header']['gam'][()]
-    
+
        
     # get all hdf5 quantites 
     for key in fin['quants'].keys():
