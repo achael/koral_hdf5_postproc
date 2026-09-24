@@ -43,6 +43,11 @@ class Shell(object):
 
         # sqrt(-g) is the same function in KS and BL
         self.gdet = gdetKS(self.spin, r, th)
+        # covariant metric, for lowering indices of the stored vectors/tensors
+        if self.metric == 'KS':
+            self.gcov = gcovKS(self.spin, r, th)
+        else:
+            self.gcov = gcovBL(self.spin, r, th)
         # (dth/dx2)*dx2 at the cell centres, assuming uniform x2
         self.dth = np.gradient(th, axis=1)
 
@@ -60,22 +65,67 @@ class Shell(object):
 # registry of fluxes
 ###############################################################################
 
-FluxDef = namedtuple('FluxDef', ['name', 'description', 'needs', 'func'])
+FluxDef = namedtuple('FluxDef', ['name', 'description', 'needs', 'func', 'notes'])
 FLUXES = OrderedDict()
 
-def register_flux(name, description, needs):
+def register_flux(name, description, needs, notes=()):
     """Decorator adding a flux to FLUXES.
 
     name        -- column name in the output table
     description -- one line for the output header
     needs       -- stored quantities the flux reads: names from dat.field_names(),
                    read with dat.field(name).  Checked before computing.
+    notes       -- optional caveats, one header line each, below the description
     """
     def deco(func):
-        FLUXES[name] = FluxDef(name, description, list(needs), func)
+        FLUXES[name] = FluxDef(name, description, list(needs), func, list(notes))
         return func
     return deco
 
+
+###############################################################################
+# helpers
+###############################################################################
+
+# stored T^{r nu}: only the upper triangle T^{mu nu}, mu <= nu, is written
+TRNU = ['T01', 'T11', 'T12', 'T13']
+MHD_PARTS = ('hd', 'mag')
+
+def needs_T(parts=MHD_PARTS):
+    """Stored quantities T_r_t reads for the given stress-tensor parts"""
+    return ['%s_%s' % (t, p) for p in parts for t in TRNU]
+
+
+def T_r_t(dat, shell, parts=MHD_PARTS):
+    """Mixed T^r_t = g_{t nu} T^{r nu}, summed over the stress-tensor parts.
+
+    Lowering with the phi- and time-independent metric commutes with the
+    averages, so this is exactly the average of T^r_t.
+    """
+    g = shell.gcov
+    Trt = 0.
+    for nu in range(4):
+        Tr = sum(dat.field('%s_%s' % (TRNU[nu], p)) for p in parts)
+        Trt = Trt + g[0][nu]*Tr
+    return Trt
+
+
+def jet_mask(dat, shell, parts=MHD_PARTS):
+    """Jet region of Paper V: (beta gamma)^2 = (-T^r_t/(rho u^r))^2 - 1 >= 1.
+
+    Built from whatever averages are in dat, so for a time-average this is the
+    cut on the time- and phi-averaged T^r_t and rho u^r that the spec asks for;
+    for a single phi-averaged dump it is that dump's own cut.  Cells with
+    rho u^r = 0 and T^r_t != 0 count as jet.
+    """
+    with np.errstate(divide='ignore', invalid='ignore'):
+        bgsq = (-T_r_t(dat, shell, parts)/dat.field('rhou1'))**2 - 1
+    return bgsq >= 1
+
+
+###############################################################################
+# fluxes
+###############################################################################
 
 @register_flux('Mdot', 'mass accretion rate, -int rho u^r sqrt(-g), positive inward',
                needs=['rhou1'])
@@ -87,6 +137,22 @@ def mdot(dat, shell):
                needs=['absB1'])
 def phi(dat, shell):
     return 0.5*shell.integrate(dat.field('absB1'))
+
+
+@register_flux('Pout', 'total outflow power, -int (T^r_t + rho u^r) sqrt(-g), MHD only',
+               needs=['rhou1'] + needs_T())
+def pout(dat, shell):
+    return -shell.integrate(T_r_t(dat, shell) + dat.field('rhou1'))
+
+
+@register_flux('Pjet', 'jet power, Pout over the (beta gamma)^2 >= 1 cut on the averages, MHD only',
+               needs=['rhou1'] + needs_T(),
+               notes=['Pjet is the power of BOTH jets (north + south); one jet carries ~Pjet/2',
+                      '(beta gamma)^2 squares -T^r_t/(rho u^r), so near the BH (r <~ 10) the cut also '
+                      'takes in magnetized inflow where rho u^r < 0 but -T^r_t > 0'])
+def pjet(dat, shell):
+    mask = jet_mask(dat, shell)
+    return -shell.integrate(T_r_t(dat, shell) + dat.field('rhou1'), mask=mask)
 
 
 def compute_fluxes(dat, names=None):
