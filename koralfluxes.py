@@ -14,12 +14,17 @@
 # To add a flux, write a function of (dat, shell) returning one value per radius
 # and register it with @register_flux; see mdot() below.
 
+import datetime
+import os
 import numpy as np
 from collections import OrderedDict, namedtuple
+import h5py
 if __package__: # imported as part of the package, from another directory
     from .metricKS import *
+    from .koralh5postproc import read_koral_hdf52D
 else:           # run as a script, or imported with this directory on sys.path
     from metricKS import *
+    from koralh5postproc import read_koral_hdf52D
 
 
 class Shell(object):
@@ -178,3 +183,113 @@ def compute_fluxes(dat, names=None):
     for n in names:
         out[n] = FLUXES[n].func(dat, shell)
     return out
+
+
+###############################################################################
+# input and output files
+###############################################################################
+
+def read_flux_input_info(filein):
+    """What kind of file this is, and its time or time window.
+
+    Returns a dict with
+      ndim      -- 2 for a phi-reduced file, 3 for a full dump or 3D average
+      phiavg    -- True for a phi-average (phi grid stored as zeros), False
+                   for a phi-slice
+      t         -- the dump time, or the mean time of a time-average
+      tavg      -- True for a time-average, which also has t_min, t_max, n_avg
+    """
+    with h5py.File(filein, 'r') as fin:
+        ph = fin['grid_out']['ph'][()]
+        info = {'ndim': ph.ndim,
+                'phiavg': ph.ndim == 2 and not np.any(ph),
+                't': float(fin['t'][()]),
+                'tavg': 't_min' in fin}
+        if info['tavg']:
+            info['t_min'] = float(fin['t_min'][()])
+            info['t_max'] = float(fin['t_max'][()])
+            info['n_avg'] = int(fin['n_avg'][()])
+    return info
+
+
+def write_flux_table(fileout, fluxes, dat, info):
+    """Write the fluxes as a text table, one row per grid radius.
+
+    fluxes -- OrderedDict from compute_fluxes, 'r' first
+    dat    -- the simdata2D they were computed from
+    info   -- dict from read_flux_input_info for the same file
+    """
+    spin = float(dat.spin)
+    horiz = 1 + np.sqrt(1 - spin**2)
+    names = [n for n in fluxes if n != 'r']
+
+    hdr = []
+    hdr.append('shell-integrated fluxes vs r, written by koralfluxes.py on %s'
+               % datetime.date.today().isoformat())
+    hdr.append('source: %s' % os.path.abspath(dat.filename))
+    hdr.append('spin a = %g   r_+ = %.6f   vector components in %s' % (spin, horiz, dat.metric))
+    if info['tavg']:
+        hdr.append('time-average of %d dumps, t_min = %g, t_max = %g'
+                   % (info['n_avg'], info['t_min'], info['t_max']))
+        hdr.append('jet cut made on the time- and phi-averaged fields, as in the spec')
+    else:
+        hdr.append('single phi-averaged dump, t = %g' % info['t'])
+        hdr.append('jet cut made on THIS DUMP\'s phi-averaged fields, not on a time-average')
+    hdr.append('code units (G = c = M = 1); every grid radius is listed, including r < r_+')
+    hdr.append('theta widths: np.gradient of cell-centre theta, ~ KORAL\'s (dth/dx2)*dx2')
+    hdr.append('')
+    for n in names:
+        hdr.append('%-5s %s' % (n, FLUXES[n].description))
+        for note in FLUXES[n].notes:
+            hdr.append('      note: %s' % note)
+    hdr.append('')
+    # first name is 2 narrower to make room for the '# ' comment prefix
+    hdr.append(' '.join(('%14s' if i == 0 else '%16s') % n for i, n in enumerate(fluxes)))
+
+    table = np.column_stack([fluxes[n] for n in fluxes])
+    np.savetxt(fileout, table, fmt='%16.9e', header='\n'.join(hdr), comments='# ')
+    return
+
+
+def flux_table_name(filein, outpath=None):
+    """phiavg5000.h5 -> phiavg5000_fluxes.txt, next to the input by default"""
+    stem = os.path.splitext(os.path.basename(filein))[0]
+    if outpath is None:
+        outpath = os.path.dirname(os.path.abspath(filein))
+    return os.path.join(outpath, stem + '_fluxes.txt')
+
+
+def fluxes_hdf5(filein, fileout, names=None, verbose=True):
+    """Compute the fluxes of one phi-averaged (or time-averaged) file and write
+    them to a text table.  Returns fileout, or None on failure."""
+    try:
+        info = read_flux_input_info(filein)
+    except Exception as e:
+        print("Error reading h5 file ", filein, ": ", e)
+        return None
+    if info['ndim'] != 2:
+        print("fluxes need a phi-averaged 2D file, but ", filein, " is 3D, skipping!")
+        return None
+    if not info['phiavg']:
+        print("fluxes need a phi-average, but ", filein, " is a phi-slice, skipping!")
+        return None
+
+    if verbose: print('computing fluxes from ', filein, '....')
+    try:
+        dat = read_koral_hdf52D(filein, verbose=False, compute_derived=False)
+        fluxes = compute_fluxes(dat, names)
+    except Exception as e:
+        print("Error computing fluxes from ", filein, ": ", e)
+        return None
+
+    try:
+        write_flux_table(fileout, fluxes, dat, info)
+    except Exception as e:
+        print("Error writing flux table ", fileout, ": ", e)
+        if os.path.exists(fileout):
+            os.remove(fileout)
+        return None
+    finally:
+        dat.close()
+
+    return fileout
