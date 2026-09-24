@@ -9,6 +9,7 @@
 #   avgkoralhdf5s.py slice DIR         phi-slice every dump at fixed phi index/indices
 #   avgkoralhdf5s.py tavg  DIR|FILES   time-average 2D reduced files or full 3D dumps
 #   avgkoralhdf5s.py all   DIR         avg (with time-average) followed by slice
+#   avgkoralhdf5s.py fluxes DIR|FILES  shell-integrated fluxes vs r of phi-averaged files
 
 import argparse
 import glob
@@ -20,10 +21,12 @@ if __package__: # imported as part of the package, from another directory
     from .metricKS import *
     from .koralh5postproc import *
     from .koralopacities import *
+    from .koralfluxes import fluxes_hdf5, flux_table_name
 else:           # run as a script, or imported with this directory on sys.path
     from metricKS import *
     from koralh5postproc import *
     from koralopacities import *
+    from koralfluxes import fluxes_hdf5, flux_table_name
 
 # defaults, all overridable on the command line
 # TODO MIGHT NOT HAVE ENOUGH MEMORY TO RUN IN PARALLEL FOR RADIATION
@@ -70,11 +73,12 @@ def outname(infile, outpath, label):
     return os.path.join(outpath, label + sep + tag + '.h5')
 
 
-def gather_files(inputs, pattern):
+def gather_files(inputs, pattern, drop_tavg=True):
     """Expand a list of directories, files or globs into a sorted file list.
 
-    Files written by the time-average (*_tavg*) are always dropped, so that
-    re-running never folds a previous average back into a new one.
+    Files written by the time-average (*_tavg*) are dropped by default, so
+    that re-running never folds a previous average back into a new one.  The
+    flux tables want them, and pass drop_tavg=False.
     """
     files = []
     for item in inputs:
@@ -83,7 +87,8 @@ def gather_files(inputs, pattern):
         else:
             hits = glob.glob(item)
             files.extend(hits if hits else [item])
-    files = [f for f in files if '_tavg' not in os.path.basename(f)]
+    if drop_tavg:
+        files = [f for f in files if '_tavg' not in os.path.basename(f)]
     return sorted(set(files))
 
 
@@ -365,16 +370,26 @@ def do_avg(args):
         return
 
     print('phi-averaging %d files' % len(infiles))
-    run_reduction(infiles, args.outpath, 'avg', args.label, PHIIDX, args.metric,
-                  args.tmin, args.tmax, args.rerun, args.kn,
-                  args.fields, args.exclude, args.nproc, args.verbose)
+    avgfiles = run_reduction(infiles, args.outpath, 'avg', args.label, PHIIDX, args.metric,
+                             args.tmin, args.tmax, args.rerun, args.kn,
+                             args.fields, args.exclude, args.nproc, args.verbose)
+
+    # one flux table per snapshot; dumps outside the time window left no file
+    if args.fluxes:
+        for avgfile in avgfiles:
+            if os.path.exists(avgfile):
+                fluxes_hdf5(avgfile, flux_table_name(avgfile), verbose=args.verbose)
 
     if args.tavg:
         avgfiles = gather_files([args.outpath], args.label + '*.h5')
-        tavg_hdf5s(avgfiles, os.path.join(args.outpath, args.label),
-                   tmin=args.tavg_tmin, tmax=args.tavg_tmax,
-                   metric_avg=args.metric, kn=args.kn,
-                   fields=args.fields, exclude=args.exclude, verbose=args.verbose)
+        tavgfile = tavg_hdf5s(avgfiles, os.path.join(args.outpath, args.label),
+                              tmin=args.tavg_tmin, tmax=args.tavg_tmax,
+                              metric_avg=args.metric, kn=args.kn,
+                              fields=args.fields, exclude=args.exclude, verbose=args.verbose)
+
+        # the spec's fluxes come from the time-average, jet cut included
+        if args.fluxes and tavgfile is not None:
+            fluxes_hdf5(tavgfile, flux_table_name(tavgfile), verbose=args.verbose)
     return
 
 
@@ -427,6 +442,20 @@ def do_all(args):
     slice_args = argparse.Namespace(**vars(args))
     slice_args.label = args.slice_label
     do_slice(slice_args)
+    return
+
+
+def do_fluxes(args):
+    """flux table for each phi-averaged file given, per-dump or time-averaged"""
+    pattern = args.pattern if args.pattern else 'phiavg*.h5'
+    infiles = gather_files(args.inputs, pattern, drop_tavg=False)
+    if len(infiles) == 0:
+        print('no input files matching', pattern, 'in', ' '.join(args.inputs))
+        return
+
+    print('computing fluxes for %d files' % len(infiles))
+    for filein in infiles:
+        fluxes_hdf5(filein, flux_table_name(filein, args.outpath), verbose=args.verbose)
     return
 
 
@@ -494,6 +523,13 @@ def build_parser():
     tavg_p.add_argument('--tavg-tmax', type=float, default=TMAX,
                         help='end of the time-averaging window')
 
+    flx_p = argparse.ArgumentParser(add_help=False)
+    flx_p.add_argument('--fluxes', dest='fluxes', action='store_true', default=True,
+                       help='write a flux table for every phi-average and for the time-average')
+    flx_p.add_argument('--no-fluxes', dest='fluxes', action='store_false',
+                       default=argparse.SUPPRESS,
+                       help='skip the flux tables')
+
     sli_p = argparse.ArgumentParser(add_help=False)
     sli_p.add_argument('--phi-idx', type=int, action='append', default=None, metavar='I',
                        help='phi index to slice at; repeat it for several slices '
@@ -504,7 +540,7 @@ def build_parser():
         description='phi-average, phi-slice and time-average KORAL ipole-format hdf5 dumps.')
     sub = parser.add_subparsers(dest='command', metavar='COMMAND')
 
-    p = sub.add_parser('avg', parents=[io_p, sel_p, phys_p, run_p, fld_p, tavg_p],
+    p = sub.add_parser('avg', parents=[io_p, sel_p, phys_p, run_p, fld_p, tavg_p, flx_p],
                        formatter_class=fmt,
                        help='phi-average every dump, then time-average the results')
     p.add_argument('inpath', help='directory holding the dumps')
@@ -536,13 +572,25 @@ def build_parser():
                    help='less chatter per file')
     p.set_defaults(func=do_tavg)
 
-    p = sub.add_parser('all', parents=[io_p, sel_p, phys_p, run_p, fld_p, tavg_p, sli_p],
+    p = sub.add_parser('all', parents=[io_p, sel_p, phys_p, run_p, fld_p, tavg_p, flx_p, sli_p],
                        formatter_class=fmt,
                        help='avg, with its time-average, followed by slice')
     p.add_argument('inpath', help='directory holding the dumps')
     p.add_argument('--label', default='phiavg', help='prefix for the phi-averaged files')
     p.add_argument('--slice-label', default='phisli', help='prefix for the phi-sliced files')
     p.set_defaults(func=do_all)
+
+    p = sub.add_parser('fluxes', formatter_class=fmt,
+                       help='shell-integrated fluxes vs r of phi-averaged files, one table each')
+    p.add_argument('inputs', nargs='+', metavar='PATH',
+                   help='directory, files or globs: per-dump phi-averages and/or time-averages')
+    p.add_argument('--pattern', default=None, metavar='GLOB',
+                   help='glob applied inside a directory argument (default: phiavg*.h5)')
+    p.add_argument('-o', '--outpath', default=None, metavar='DIR',
+                   help='directory for the tables (default: alongside each input)')
+    p.add_argument('-q', '--quiet', dest='verbose', action='store_false', default=True,
+                   help='less chatter per file')
+    p.set_defaults(func=do_fluxes)
 
     return parser
 
