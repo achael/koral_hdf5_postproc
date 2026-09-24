@@ -169,27 +169,34 @@ class simdata3D(object):
         """Metric, 4-velocities, b^mu, and the plasma parameters"""
         spin, r, th = self.spin, self.r, self.th
 
-        # Metric
+        # Metric of the output vector components
         if self.metric == 'KS':
             self.gcon = gconKS(spin, r, th)
             lower = lowerKS
-            conv_vel = conv_vel_KS
             trans_cov = trans_cov_bl2ks
             invconv_vel = invconv_vel_KS
         else:
             self.gcon = gconBL(spin, r, th)
             lower = lowerBL
-            conv_vel = conv_vel_BL
             trans_cov = trans_cov_ks2bl
             invconv_vel = invconv_vel_BL
 
+        # the primitives are in the file's coordinates, so build the 4-vectors
+        # there and only then transform them to the output coordinates
+        if self.metric_out == 'KS':
+            lower_in = lowerKS
+            conv_vel_in = conv_vel_KS
+        else:
+            lower_in = lowerBL
+            conv_vel_in = conv_vel_BL
+
         # get 4-velocity
-        (u0,u1,u2,u3) = conv_vel(self.u1_velr, self.u2_velr, self.u3_velr, spin, r, th)
-        (u0_l,u1_l,u2_l,u3_l) = lower(u0, u1, u2, u3, spin, r, th)
+        (u0,u1,u2,u3) = conv_vel_in(self.u1_velr, self.u2_velr, self.u3_velr, spin, r, th)
+        (u0_l,u1_l,u2_l,u3_l) = lower_in(u0, u1, u2, u3, spin, r, th)
 
         if self.has_radiation:
-            (ur0,ur1,ur2,ur3) = conv_vel(self.ur1_velr, self.ur2_velr, self.ur3_velr, spin, r, th)
-            (ur0_l,ur1_l,ur2_l,ur3_l) = lower(ur0, ur1, ur2, ur3, spin, r, th)
+            (ur0,ur1,ur2,ur3) = conv_vel_in(self.ur1_velr, self.ur2_velr, self.ur3_velr, spin, r, th)
+            (ur0_l,ur1_l,ur2_l,ur3_l) = lower_in(ur0, ur1, ur2, ur3, spin, r, th)
 
         # get magnetic field 4-vector and b^2
         B1, B2, B3 = self.B1, self.B2, self.B3
@@ -198,7 +205,7 @@ class simdata3D(object):
         b2 = (B2 + b0*u2)/u0
         b3 = (B3 + b0*u3)/u0
 
-        (b0_l,b1_l,b2_l,b3_l) = lower(b0, b1, b2, b3, spin, r, th)
+        (b0_l,b1_l,b2_l,b3_l) = lower_in(b0, b1, b2, b3, spin, r, th)
         bsq = b0*b0_l + b1*b1_l + b2*b2_l + b3*b3_l
 
         # change coordinates
