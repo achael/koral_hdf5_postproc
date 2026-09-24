@@ -231,12 +231,12 @@ def write_flux_table(fileout, fluxes, dat, info):
     if info['tavg']:
         hdr.append('time-average of %d dumps, t_min = %g, t_max = %g'
                    % (info['n_avg'], info['t_min'], info['t_max']))
-        hdr.append('jet cut made on the time- and phi-averaged fields, as in the spec')
+#        hdr.append('jet cut made on the time- and phi-averaged fields, as in the spec')
     else:
         hdr.append('single phi-averaged dump, t = %g' % info['t'])
-        hdr.append('jet cut made on THIS DUMP\'s phi-averaged fields, not on a time-average')
-    hdr.append('code units (G = c = M = 1); every grid radius is listed, including r < r_+')
-    hdr.append('theta widths: np.gradient of cell-centre theta, ~ KORAL\'s (dth/dx2)*dx2')
+#        hdr.append('jet cut made on THIS DUMP\'s phi-averaged fields, not on a time-average')
+#    hdr.append('code units (G = c = M = 1); every grid radius is listed, including r < r_+')
+#    hdr.append('theta widths: np.gradient of cell-centre theta, ~ KORAL\'s (dth/dx2)*dx2')
     hdr.append('')
     for n in names:
         hdr.append('%-5s %s' % (n, FLUXES[n].description))
