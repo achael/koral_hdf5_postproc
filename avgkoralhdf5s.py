@@ -572,14 +572,6 @@ def build_parser():
                    help='less chatter per file')
     p.set_defaults(func=do_tavg)
 
-    p = sub.add_parser('all', parents=[io_p, sel_p, phys_p, run_p, fld_p, tavg_p, flx_p, sli_p],
-                       formatter_class=fmt,
-                       help='avg, with its time-average, followed by slice')
-    p.add_argument('inpath', help='directory holding the dumps')
-    p.add_argument('--label', default='phiavg', help='prefix for the phi-averaged files')
-    p.add_argument('--slice-label', default='phisli', help='prefix for the phi-sliced files')
-    p.set_defaults(func=do_all)
-
     p = sub.add_parser('fluxes', formatter_class=fmt,
                        help='shell-integrated fluxes vs r of phi-averaged files, one table each')
     p.add_argument('inputs', nargs='+', metavar='PATH',
@@ -591,6 +583,14 @@ def build_parser():
     p.add_argument('-q', '--quiet', dest='verbose', action='store_false', default=True,
                    help='less chatter per file')
     p.set_defaults(func=do_fluxes)
+
+    p = sub.add_parser('all', parents=[io_p, sel_p, phys_p, run_p, fld_p, tavg_p, flx_p, sli_p],
+                       formatter_class=fmt,
+                       help='avg, with its time-average, followed by slice')
+    p.add_argument('inpath', help='directory holding the dumps')
+    p.add_argument('--label', default='phiavg', help='prefix for the phi-averaged files')
+    p.add_argument('--slice-label', default='phisli', help='prefix for the phi-sliced files')
+    p.set_defaults(func=do_all)
 
     return parser
 
